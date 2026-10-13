@@ -11,6 +11,12 @@ function BaseIcon({ className = "h-4 w-4", children, ...props }) {
 export function IconGrid(props) {
   return <BaseIcon {...props}><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/></BaseIcon>;
 }
+export function IconMessageSquare(props) {
+  return <BaseIcon {...props}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></BaseIcon>;
+}
+export function IconSend(props) {
+  return <BaseIcon {...props}><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></BaseIcon>;
+}
 export function IconLayoutDashboard(props) {
   return <BaseIcon {...props}><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></BaseIcon>;
 }

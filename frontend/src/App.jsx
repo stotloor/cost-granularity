@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { IconLayoutDashboard, IconAlertTriangle, IconReceipt, IconNetwork, IconFolderTree, IconLayers, IconDatabase, IconList, IconMenu, IconX, IconSearch } from './components/icons.jsx';
+import { IconLayoutDashboard, IconAlertTriangle, IconReceipt, IconNetwork, IconFolderTree, IconLayers, IconDatabase, IconList, IconMenu, IconX, IconSearch, IconMessageSquare } from './components/icons.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import PurchaseOrders from './pages/PurchaseOrders.jsx';
 import Projects from './pages/Projects.jsx';
@@ -8,6 +8,7 @@ import ActivityAnalysis from './pages/ActivityAnalysis.jsx';
 import ExceptionMonitor from './pages/ExceptionMonitor.jsx';
 import DataQuality from './pages/DataQuality.jsx';
 import RequirementsMap from './pages/RequirementsMap.jsx';
+import AiAssistant from './pages/AiAssistant.jsx';
 import { useInsights, gbpShort } from './lib/insights.js';
 
 const PAGES = {
@@ -19,6 +20,7 @@ const PAGES = {
   Exceptions: ExceptionMonitor,
   DataQuality,
   RequirementsMap,
+  Assistant: AiAssistant,
 };
 
 const baseNav = [
@@ -30,6 +32,7 @@ const baseNav = [
   { id: 'Exceptions', label: 'Exceptions', icon: IconAlertTriangle },
   { id: 'DataQuality', label: 'Data Quality', icon: IconDatabase },
   { id: 'RequirementsMap', label: 'Requirements Map', icon: IconList },
+  { id: 'Assistant', label: 'AI Assistant', icon: IconMessageSquare },
 ];
 
 // Global search: jump to the first PO, project, submission or WBS that matches.

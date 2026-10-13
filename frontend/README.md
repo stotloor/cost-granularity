@@ -21,3 +21,18 @@ Then open the URL Vite prints (default http://localhost:5174).
 
 With `VITE_API_URL` set, the app talks to its FastAPI backend; with it unset it
 runs against an in-memory mock so you can demo without the backend.
+
+## AI Assistant
+
+The **AI Assistant** tab (`src/pages/AiAssistant.jsx`) is a chat page that sends each question to a
+Flowise prediction endpoint (`src/lib/assistant.js`) and renders the markdown reply.
+
+- **Endpoint:** set it with `VITE_ASSISTANT_URL`. The default is the Apex Flowise agent.
+- **Calls:** the browser calls the endpoint directly, which works because the endpoint allows any
+  origin (CORS).
+- **Memory:** the flow keeps none on the server, so each request sends the last 10 turns as Flowise
+  `history`. That is what makes follow-up questions work.
+- **Responses:** plain-text and JSON (`{ text }`) responses are both handled.
+- **Waiting:** requests time out after 3 minutes and can be stopped while they run.
+- **Persistence:** the conversation is kept in `sessionStorage`. It survives switching tabs and is
+  cleared by **New chat** or by closing the browser tab.
