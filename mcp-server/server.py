@@ -21,6 +21,7 @@ from uuid import UUID
 import psycopg
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from psycopg import sql
 
@@ -419,11 +420,22 @@ def main():
     ap.add_argument('--transport', choices=['stdio', 'streamable-http', 'sse'], default='stdio')
     ap.add_argument('--host', default='127.0.0.1')
     ap.add_argument('--port', type=int, default=8765)
+    ap.add_argument('--allowed-host', action='append', default=[], metavar='HOST',
+                    help='Extra Host header to accept, e.g. a tunnel domain (repeatable). '
+                         'Localhost is always allowed; DNS-rebinding protection stays on.')
     args = ap.parse_args()
     if args.transport == 'stdio':
         mcp.run()
-    else:
-        mcp.run(transport=args.transport, host=args.host, port=args.port)
+        return
+    kwargs = {}
+    if args.allowed_host:
+        local = ['127.0.0.1', 'localhost', '[::1]']
+        kwargs['transport_security'] = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=[f'{h}:*' for h in local] + [x for h in args.allowed_host for x in (h, f'{h}:*')],
+            allowed_origins=[f'http://{h}:*' for h in local] + [f'https://{h}' for h in args.allowed_host],
+        )
+    mcp.run(transport=args.transport, host=args.host, port=args.port, **kwargs)
 
 
 if __name__ == '__main__':
