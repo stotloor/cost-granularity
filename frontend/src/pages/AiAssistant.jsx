@@ -1,9 +1,21 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { PageHeader, Button, cn } from '../components/ui.jsx';
 import { IconMessageSquare, IconSend, IconPlus, IconX } from '../components/icons.jsx';
 import { askAssistant } from '../lib/assistant.js';
+
+// Charts arrive as ```chart blocks holding a cg-chart spec (MCP create_chart tool).
+// The renderer (and recharts) only loads when a reply actually contains one.
+const AssistantChart = lazy(() => import('../components/AssistantChart.jsx'));
+
+function chartSource(node) {
+  const code = node && node.children && node.children[0];
+  if (!code || code.tagName !== 'code') return null;
+  const cls = [].concat((code.properties && code.properties.className) || []);
+  if (!cls.includes('language-chart')) return null;
+  return (code.children || []).map((c) => c.value || '').join('');
+}
 
 const STORAGE_KEY = 'cg_assistant_messages';
 
@@ -43,7 +55,17 @@ const markdown = {
   thead: (props) => <thead className="bg-slate-50 text-slate-600" {...props} />,
   th: (props) => <th className="px-3 py-2 text-left font-semibold whitespace-nowrap" {...props} />,
   td: (props) => <td className="px-3 py-1.5 border-t border-slate-100 whitespace-nowrap" {...props} />,
-  pre: (props) => <pre className="my-3 overflow-x-auto rounded-xl bg-slate-900 p-3 text-xs text-slate-100" {...props} />,
+  pre: ({ node, ...props }) => {
+    const source = chartSource(node);
+    if (source != null) {
+      return (
+        <Suspense fallback={<div className="my-3 h-72 rounded-xl border border-slate-200 bg-slate-50 animate-pulse" />}>
+          <AssistantChart source={source} />
+        </Suspense>
+      );
+    }
+    return <pre className="my-3 overflow-x-auto rounded-xl bg-slate-900 p-3 text-xs text-slate-100" {...props} />;
+  },
   code: ({ className, children, ...props }) => (className
     ? <code className={className} {...props}>{children}</code>
     : <code className="rounded bg-slate-100 px-1 py-0.5 text-[0.85em] text-slate-800" {...props}>{children}</code>),

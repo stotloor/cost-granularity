@@ -39,7 +39,7 @@ async def main():
         await s.initialize()
         tools = {t.name for t in (await s.list_tools()).tools}
         check('tools listed', tools >= {'get_schema', 'run_query', 'describe_table', 'get_distinct_values',
-                                        'search_values', 'get_business_context'}, tools)
+                                        'search_values', 'get_business_context', 'create_chart'}, tools)
         prompts = {p.name for p in (await s.list_prompts()).prompts}
         check('prompt listed', 'cost_granularity_analyst' in prompts, prompts)
 
@@ -87,6 +87,39 @@ async def main():
         check('search finds project in several tables', len({m['table_name'] for m in f['matches']}) >= 3, f)
         f = payload(await call('search_values', term='100%_x'))
         check('search escapes wildcards', f['matches'] == [], f)
+
+        def spec_of(res):
+            md = res.get('markdown', '') if isinstance(res, dict) else ''
+            ok = md.startswith('```chart\n') and md.endswith('\n```')
+            return json.loads(md[len('```chart\n'):-len('\n```')]) if ok else None
+
+        c = payload(await call('create_chart', chart_type='bar', title='YTD SAP actual by project',
+                                query='select project_definition, sum(ytd_total) as ytd from v_sap_wbs_ytd group by 1 order by 2 desc',
+                                x='project_definition', y=['ytd'], series_labels=['YTD actual'], unit='gbp'))
+        sp = spec_of(c)
+        check('chart from query', sp is not None and sp['type'] == 'cg-chart' and len(sp['data']) == 18
+              and sp['series'][0]['label'] == 'YTD actual' and sp['unit'] == 'gbp', c)
+        c = payload(await call('create_chart', chart_type='pie', title='YTD by regulatory activity',
+                                query='select activity_code, sum(ytd_total) as ytd from v_sap_wbs_ytd group by 1',
+                                x='activity_code', y=['ytd'], unit='gbp'))
+        sp = spec_of(c)
+        check('pie folds tail into Other', sp is not None and len(sp['data']) == 6
+              and sp['data'][-1]['activity_code'].startswith('Other'), c)
+        c = payload(await call('create_chart', chart_type='line', title='Spend by period', x='period', y=['amount'],
+                                data=[{'period': 'P1', 'amount': 10.5}, {'period': 'P2', 'amount': '1,200'}]))
+        sp = spec_of(c)
+        check('chart from inline data', sp is not None and sp['data'][1]['amount'] == 1200, c)
+        for bad, args in [
+            ('both query and data', dict(chart_type='bar', title='t', x='a', y=['b'], query='select 1 as a, 2 as b', data=[{'a': 1, 'b': 2}])),
+            ('neither query nor data', dict(chart_type='bar', title='t', x='a', y=['b'])),
+            ('unknown chart type', dict(chart_type='radar', title='t', x='a', y=['b'], data=[{'a': 1, 'b': 2}])),
+            ('pie with two series', dict(chart_type='pie', title='t', x='a', y=['b', 'c'], data=[{'a': 'x', 'b': 1, 'c': 2}])),
+            ('missing column', dict(chart_type='bar', title='t', x='a', y=['nope'], data=[{'a': 'x', 'b': 1}])),
+            ('non-numeric y', dict(chart_type='bar', title='t', x='a', y=['b'], data=[{'a': 'x', 'b': 'lots'}])),
+            ('write via query', dict(chart_type='bar', title='t', x='a', y=['b'], query='delete from purchase_order returning 1 as a, 2 as b')),
+        ]:
+            res = payload(await call('create_chart', **args))
+            check(f'chart rejects: {bad}', isinstance(res, dict) and 'error' in res, res)
 
         ctx = payload(await call('get_business_context'))
         check('business context', isinstance(ctx, str) and 'percentage_of_wbs' in ctx)

@@ -25,6 +25,8 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from psycopg import sql
 
+import charts
+
 DSN = os.environ.get('CG_DATABASE_URL', 'postgresql://cg_mcp_readonly@localhost/cost_granularity')
 SCHEMA = 'cost_granularity'
 STATEMENT_TIMEOUT_MS = int(os.environ.get('CG_STATEMENT_TIMEOUT_MS', '15000'))
@@ -39,7 +41,8 @@ mcp = MCPServer(
         'planned investments, summary purchase orders and their manual allocation to projects/WBS. '
         'Start with get_business_context and get_schema, use describe_table / get_distinct_values / '
         'search_values to learn the data, then answer with run_query (PostgreSQL SELECT). '
-        'Prefer the v_* views: they already compute YTD totals, allocated amounts and reconciliation flags.'
+        'Prefer the v_* views: they already compute YTD totals, allocated amounts and reconciliation flags. '
+        'To show a chart, call create_chart and paste its `markdown` block verbatim into your answer.'
     ),
 )
 
@@ -335,6 +338,54 @@ def search_values(term: str, limit: int = 50) -> dict:
     cols, matches, truncated = _fetch(sql.SQL(' UNION ALL ').join(parts) + sql.SQL(' ORDER BY 1, 2, 3'),
                                       {'p': pattern}, max_rows=limit)
     return {'term': term, 'matches': [dict(zip(cols, m)) for m in matches], 'truncated': truncated}
+
+
+@mcp.tool(annotations=READ_ONLY)
+def create_chart(chart_type: str, title: str, x: str, y: list[str],
+                 query: str | None = None, data: list[dict[str, Any]] | None = None,
+                 series_labels: list[str] | None = None, x_label: str | None = None,
+                 unit: str = 'number', stacked: bool = False, subtitle: str | None = None) -> dict:
+    """Create a chart for your answer. Returns a chart spec and a `markdown` block.
+
+    HOW TO SHOW IT: copy the returned `markdown` value into your final answer exactly as
+    returned (a ```chart fenced block), on its own lines, where the chart should appear.
+    Never edit, reformat, summarise or re-type it; the user's app renders it as a chart.
+    Still state the key numbers in text: the chart supports the answer, it is not the answer.
+
+    Data (give exactly one):
+    - query: a read-only SELECT (same rules as run_query). Preferred: the chart then shows
+      database values, not re-typed ones. Aggregate in SQL; one row per x value.
+    - data: a list of row objects, only for values you already computed.
+
+    Parameters:
+    - chart_type: bar (compare categories) | horizontal_bar (long category names or
+      ranked lists) | line (change over periods) | area (cumulative/stacked change over
+      periods) | pie (part of a whole, <= 6 slices; the rest is folded into "Other") |
+      scatter (relationship between two numeric columns; <= 3 series)
+    - x: column for categories/periods (numeric for scatter). y: 1-8 numeric columns,
+      all in the same unit. Never put £ and % on one chart; make two charts.
+    - unit: gbp | percent (values already 0-100) | number.
+    - title: what is plotted and the period, e.g. "YTD SAP actual by project, FY26/27 P1-P6".
+    - series_labels: readable names for the y columns; stacked: stack bar/area series.
+    """
+    if (query is None) == (data is None):
+        raise QueryError('give exactly one of query or data')
+    if query is not None:
+        cols, rows, truncated = _fetch(_single_statement(query), max_rows=charts.MAX_POINTS)
+        if truncated:
+            raise QueryError(f'the query returns more than {charts.MAX_POINTS} rows; aggregate it first')
+    else:
+        if not isinstance(data, list) or not all(isinstance(r, dict) for r in data):
+            raise QueryError('data must be a list of objects, e.g. [{"project": "GT-P0280", "ytd": 1200}]')
+        cols = list(dict.fromkeys(k for r in data for k in r))
+        rows = [[r.get(c) for c in cols] for r in data]
+    try:
+        spec = charts.build_chart(chart_type, title, cols, rows, x, list(y), series_labels,
+                                  x_label, unit, stacked, subtitle)
+    except charts.ChartError as e:
+        raise QueryError(str(e)) from None
+    return {'markdown': charts.to_markdown(spec), 'chart': spec['chart'], 'points': len(spec['data']),
+            'instructions': 'Paste `markdown` verbatim into your final answer where the chart should appear.'}
 
 
 BUSINESS_CONTEXT = """\
