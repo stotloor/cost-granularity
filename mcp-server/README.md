@@ -13,6 +13,7 @@ Gives an agent read-only SQL access to the `cost_granularity` Postgres database 
 | `describe_table` | Detail for one table or view: a profile of every column (nulls, distinct count, min/max, top values), sample rows, and the SQL definition for views. |
 | `get_distinct_values` | Distinct values of a column with counts, for statuses, codes, regions and price bases. |
 | `search_values` | Finds every table, column and row key that mentions a term, e.g. `GT-P0416`, `Northfield` or `PAC-02000`. |
+| `create_chart` | Builds a chart from a read-only SQL `query` (preferred, so the values come straight from the database) or from inline `data`. It returns a `cg-chart` spec wrapped in a ```` ```chart ```` markdown block for the agent to paste into its answer. |
 
 There is also a prompt, `cost_granularity_analyst`, with a suggested workflow. All tools are annotated `readOnlyHint`.
 
@@ -70,3 +71,47 @@ ngrok http 8765
 ```
 
 The server has no authentication, so anyone who has the URL can query the database (read-only).
+
+## Charts
+
+`create_chart` doesn't return an image. It returns a small JSON **chart spec**, already wrapped in a
+fenced block:
+
+````
+```chart
+{"type":"cg-chart","version":1,"chart":"bar","title":"YTD SAP actual by project",
+ "x":{"key":"project_definition","label":"Project"},"series":[{"key":"ytd","label":"YTD actual"}],
+ "unit":"gbp","data":[{"project_definition":"GT-P0462","ytd":4008190}, ...]}
+```
+````
+
+The agent pastes that block into its reply as-is. The Flowise endpoint returns plain text, so this
+block is the only way the chart can get through, and a spec is small enough to survive: six charts
+came to about 5 KB in total. The client then renders it. In this app, the AI Assistant tab draws every
+```` ```chart ```` block as an interactive chart (`frontend/src/components/AssistantChart.jsx`).
+
+**Why a spec rather than an image:**
+- **No hosting needed:** an image would mean storing a file and passing a URL, or pasting kilobytes
+  of base64 that the model can't copy reliably.
+- **Interactive:** the chart gets tooltips and a data table.
+- **Consistent styling:** the client styles every chart the same way.
+- **Accurate numbers:** with `query`, the values come from the database, not from the model retyping
+  them.
+
+**Chart types:** `bar`, `horizontal_bar`, `line`, `area` (optionally `stacked`), `pie` (6 slices at
+most, with the rest folded into "Other") and `scatter` (3 series at most).
+
+**Units:** `gbp`, `percent` or `number`. Every chart has one unit and one y-axis, so £ and % never
+share a chart.
+
+**Limits:**
+- 500 rows; aggregate in SQL to stay under it
+- 60 bar categories
+- 8 series
+- 24 KB per spec
+
+**Errors:** the tool rejects bad input with a message the agent can act on.
+
+**Flowise setup:** in the agent's MCP tool node, refresh **Available Actions** and enable
+`create_chart`. The node only exposes the tools selected there. Then add the *Charts* section of
+`prompts/conversational_agent.md` to the agent's system prompt.
