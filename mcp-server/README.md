@@ -58,3 +58,15 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
     `{"command": "/abs/path/mcp-server/.venv/bin/python", "args": ["/abs/path/mcp-server/server.py"]}`
 
   When Flowise runs in Docker, start the server with `--host 0.0.0.0` and use `host.docker.internal`.
+
+## Public tunnel (e.g. ngrok)
+
+The HTTP transport rejects unknown `Host` headers with a 421 error, which protects against DNS rebinding.
+To serve through a tunnel, allow the tunnel's domain:
+
+```bash
+.venv/bin/python server.py --transport streamable-http --port 8765 --allowed-host <your-subdomain>.ngrok-free.dev
+ngrok http 8765
+```
+
+The server has no authentication, so anyone who has the URL can query the database (read-only).
