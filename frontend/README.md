@@ -36,3 +36,8 @@ Flowise prediction endpoint (`src/lib/assistant.js`) and renders the markdown re
 - **Waiting:** requests time out after 3 minutes and can be stopped while they run.
 - **Persistence:** the conversation is kept in `sessionStorage`. It survives switching tabs and is
   cleared by **New chat** or by closing the browser tab.
+- **Charts:** a reply can contain ```` ```chart ```` blocks, which are `cg-chart` specs from the MCP
+  `create_chart` tool. They render as interactive charts (`src/components/AssistantChart.jsx`, using
+  recharts) with tooltips and a **Show data** table. An invalid spec shows a notice instead of
+  breaking the reply. The chart code is lazy-loaded, so it's only fetched when a reply contains a
+  chart.
