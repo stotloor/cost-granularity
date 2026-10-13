@@ -1,0 +1,28 @@
+# One-command full-stack run for Project Cost Granularity Controller.
+#   docker compose up --build
+# Frontend: http://localhost:5174   Backend: http://localhost:8000
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      APEX_SECRET: change-me
+      # Dashboard data: the cost_granularity database (see database/README.md).
+      # Defaults to a Postgres on the host machine; override with DATABASE_URL.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${USER}@host.docker.internal:5432/cost_granularity}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - app-data:/data
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: http://localhost:8000
+    ports:
+      - "5174:80"
+    depends_on:
+      - backend
+volumes:
+  app-data:

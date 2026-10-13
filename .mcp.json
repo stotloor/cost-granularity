@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "cost-granularity": {
+      "command": "/Users/stotloor/workspace/project-cost-granularity-controller/mcp-server/.venv/bin/python",
+      "args": ["/Users/stotloor/workspace/project-cost-granularity-controller/mcp-server/server.py"],
+      "env": { "CG_DATABASE_URL": "postgresql://cg_mcp_readonly@localhost/cost_granularity" }
+    }
+  }
+}

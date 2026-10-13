@@ -1,0 +1,101 @@
+"""End-to-end test: start server.py over stdio with a real MCP client and call every tool.
+
+    .venv/bin/python tests/smoke_test.py
+"""
+import asyncio
+import json
+import sys
+from pathlib import Path
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+SERVER = Path(__file__).resolve().parent.parent / 'server.py'
+
+
+def payload(result):
+    if result.is_error:
+        return {'error': result.content[0].text}
+    if result.structured_content is not None:
+        sc = result.structured_content
+        return sc.get('result', sc) if set(sc) == {'result'} else sc
+    text = result.content[0].text
+    try:
+        return json.loads(text)
+    except ValueError:
+        return text
+
+
+async def main():
+    failures = []
+
+    def check(name, cond, detail=''):
+        print(('PASS ' if cond else 'FAIL ') + name + (f'  [{detail}]' if detail and not cond else ''))
+        if not cond:
+            failures.append(name)
+
+    params = StdioServerParameters(command=sys.executable, args=[str(SERVER)])
+    async with stdio_client(params) as (r, w), ClientSession(r, w) as s:
+        await s.initialize()
+        tools = {t.name for t in (await s.list_tools()).tools}
+        check('tools listed', tools >= {'get_schema', 'run_query', 'describe_table', 'get_distinct_values',
+                                        'search_values', 'get_business_context'}, tools)
+        prompts = {p.name for p in (await s.list_prompts()).prompts}
+        check('prompt listed', 'cost_granularity_analyst' in prompts, prompts)
+
+        call = lambda n, **a: s.call_tool(n, a)
+        schema = payload(await call('get_schema'))
+        names = {x['name'] for x in schema['relations']}
+        check('schema has tables and views', {'purchase_order', 'v_po_allocation', 'wbs_element'} <= names, names)
+        check('answer key hidden', 'seeded_exception' not in names)
+        check('foreign keys present', any(f['from_table'] == 'po_allocation' for f in schema['foreign_keys']))
+        check('last load reported', 'last_load' in schema)
+
+        q = payload(await call('run_query', query="SELECT po_number, unallocated_difference FROM v_purchase_order_summary "
+                                                  "WHERE unallocated_difference <> 0 ORDER BY 1"))
+        check('query works', q.get('row_count', 0) >= 1, q)
+        q = payload(await call('run_query', query="select wbs_element from wbs_element where wbs_element like 'GT-P04%'", max_rows=3))
+        check('LIKE with % and truncation', q.get('row_count') == 3 and q.get('truncated') is True, q)
+        q = payload(await call('run_query', query="select ';' as semi -- trailing; comment\n;"))
+        check('semicolon in literal/comment ok', q.get('rows') == [[';']], q)
+        for bad in ["DELETE FROM purchase_order", "select 1; delete from purchase_order",
+                    "commit; delete from purchase_order", "select * from seeded_exception",
+                    "with x as (delete from po_allocation returning 1) select * from x",
+                    "select pg_sleep(1) ; select 1", "selec 1"]:
+            res = payload(await call('run_query', query=bad))
+            check(f'rejected: {bad[:45]}', isinstance(res, dict) and 'error' in res, res)
+        e = payload(await call('run_query', query="select po_numbr from purchase_order"))
+        check('SQL error message reaches agent', 'po_numbr' in e.get('error', '') and 'does not exist' in e['error'], e)
+        e = payload(await call('run_query', query="select * from seeded_exception"))
+        check('permission error is explicit', 'permission denied' in e.get('error', ''), e)
+        q = payload(await call('run_query', query="select count(*) from purchase_order"))
+        check('data intact after attacks', q['rows'] == [[20]], q)
+
+        d = payload(await call('describe_table', table='purchase_order'))
+        check('describe_table profile', len(d.get('profile', [])) == len(d.get('columns', [])) > 0, d)
+        d = payload(await call('describe_table', table='v_po_allocation', sample_rows=2))
+        check('describe view has definition', 'definition' in d and len(d['sample']['rows']) == 2)
+        d = payload(await call('describe_table', table='pg_shadow'))
+        check('describe rejects unknown', isinstance(d, dict) and 'error' in d, d)
+
+        v = payload(await call('get_distinct_values', table='po_allocation', column='review_status'))
+        check('distinct values', {x['value'] for x in v['values']} == {'Approved', 'For review', 'Query raised'}, v)
+        v = payload(await call('get_distinct_values', table='po_allocation', column='nope'))
+        check('distinct rejects bad column', 'error' in v, v)
+
+        f = payload(await call('search_values', term='GT-P0416'))
+        check('search finds project in several tables', len({m['table_name'] for m in f['matches']}) >= 3, f)
+        f = payload(await call('search_values', term='100%_x'))
+        check('search escapes wildcards', f['matches'] == [], f)
+
+        ctx = payload(await call('get_business_context'))
+        check('business context', isinstance(ctx, str) and 'percentage_of_wbs' in ctx)
+        p = await s.get_prompt('cost_granularity_analyst', {'question': 'Which POs are over-allocated?'})
+        check('prompt renders', 'over-allocated' in p.messages[0].content.text)
+
+        print(json.dumps({k: schema[k] for k in ('schema', 'last_load')}, default=str))
+    print(f'\n{len(failures)} failure(s)')
+    sys.exit(1 if failures else 0)
+
+
+asyncio.run(main())

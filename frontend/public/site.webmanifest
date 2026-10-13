@@ -1,0 +1,16 @@
+{
+  "name": "Project Cost Granularity Controller",
+  "short_name": "Project Cos\u2026",
+  "description": "Multi-system cost reconciliation and regulatory traceability platform demonstrating SAP S/4, COUPA, FastDraft, and P6 integration with sample data.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0b132b",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    }
+  ]
+}
