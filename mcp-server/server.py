@@ -478,6 +478,17 @@ def _history(query: sql.Composable, params: tuple) -> list[dict[str, Any]]:
         raise QueryError(_pg_error(e)) from None
 
 
+def _no_user(user_id: str) -> dict | None:
+    """A missing user ID is not an error: some agent hosts (e.g. Flowise) abort the whole run when a
+    tool errors, so answer normally and let the agent carry on without history. An unrendered
+    template such as '{{ $flow.state.userId }}' counts as missing."""
+    if user_id and '{{' not in user_id:
+        return None
+    return {'status': 'skipped', 'received_user_id': user_id,  # shows an unrendered template when debugging a host
+            'reason': 'no user_id was provided, so conversation history is unavailable; '
+                      'continue without it and do not ask the user for an ID'}
+
+
 @mcp.tool(annotations=APPEND_ONLY)
 def add_conversation_summary(user_id: str, summary: str) -> dict:
     """Store a summary of the conversation you just had with a user, timestamped now, so a later
@@ -487,8 +498,10 @@ def add_conversation_summary(user_id: str, summary: str) -> dict:
     - summary: free text. Record what was asked, the key findings with their figures and keys
       (PO, project, WBS, investment), and any open follow-ups."""
     user_id, summary = (user_id or '').strip(), (summary or '').strip()
-    if not user_id or not summary:
-        raise QueryError('user_id and summary are required')
+    if skipped := _no_user(user_id):
+        return skipped
+    if not summary:
+        raise QueryError('summary is required')
     rows = _history(sql.SQL('INSERT INTO {} (user_id, summary) VALUES (%s, %s) '
                             'RETURNING id, user_id, summary, created_at').format(HISTORY_TABLE),
                     (user_id, summary))
@@ -503,8 +516,8 @@ def get_recent_conversations(user_id: str, limit: int = RECENT_CONVERSATIONS_LIM
 
     - user_id: the same identifier used with add_conversation_summary, e.g. their login email."""
     user_id = (user_id or '').strip()
-    if not user_id:
-        raise QueryError('user_id is required')
+    if skipped := _no_user(user_id):
+        return skipped
     limit = max(1, min(int(limit), 20))
     rows = _history(sql.SQL('SELECT id, summary, created_at FROM {} WHERE lower(user_id) = lower(%s) '
                             'ORDER BY created_at DESC, id DESC LIMIT %s').format(HISTORY_TABLE),

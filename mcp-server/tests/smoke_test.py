@@ -134,9 +134,13 @@ async def main():
               [c['summary'] for c in h.get('conversations', [])] == ['summary 3', 'summary 2', 'summary 1'], h)
         h = payload(await call('get_recent_conversations', user_id=user, limit=10))
         check('history limit', h.get('count') == 4, h)
-        for bad in [dict(user_id=user, summary='  '), dict(user_id='', summary='x')]:
-            res = payload(await call('add_conversation_summary', **bad))
-            check(f'history rejects: {bad}', isinstance(res, dict) and 'error' in res, res)
+        res = payload(await call('add_conversation_summary', user_id=user, summary='  '))
+        check('history rejects blank summary', isinstance(res, dict) and 'error' in res, res)
+        # A missing or unrendered user ID must not be a tool error: Flowise aborts the run on one.
+        for missing in ['', '  ', '{{ $flow.state.userId }}']:
+            for tool, extra in [('add_conversation_summary', {'summary': 'x'}), ('get_recent_conversations', {})]:
+                res = payload(await call(tool, user_id=missing, **extra))
+                check(f'{tool} skips user_id={missing!r}', isinstance(res, dict) and res.get('status') == 'skipped', res)
         names = {x['name'] for x in payload(await call('get_schema', include_columns=False))['relations']}
         check('history hidden from analysis tools', 'conversation_history' not in names, names)
 
