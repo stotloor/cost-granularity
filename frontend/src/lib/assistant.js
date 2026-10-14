@@ -1,7 +1,14 @@
-// AI Assistant client: posts a question to the Flowise prediction endpoint.
-// Override the endpoint with VITE_ASSISTANT_URL.
+// AI Assistant client. With a backend (VITE_API_URL) it posts to /api/ai/assistant, which forwards
+// to Flowise tagged with the logged-in user's email (for conversation history). Without one (mock
+// mode) it posts straight to the Flowise prediction endpoint, anonymously; override that endpoint
+// with VITE_ASSISTANT_URL.
+import { API_URL, USE_MOCK } from './apexConfig.js';
+import { authToken } from './apexHttp.js';
+
 const DEFAULT_URL = 'https://apex.aziro.ai/apexflow/api/v1/prediction/8efad22c-6229-4e48-91a3-8e47cfc08052';
-export const ASSISTANT_URL = (import.meta.env && import.meta.env.VITE_ASSISTANT_URL) || DEFAULT_URL;
+export const ASSISTANT_URL = USE_MOCK
+  ? (import.meta.env && import.meta.env.VITE_ASSISTANT_URL) || DEFAULT_URL
+  : API_URL + '/api/ai/assistant';
 
 const TIMEOUT_MS = 180000; // agent runs with several tool calls can take a while
 const HISTORY_TURNS = 10; // the flow has no server-side memory; send recent turns as context
@@ -20,7 +27,7 @@ export async function askAssistant(question, messages = [], signal) {
   try {
     const res = await fetch(ASSISTANT_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: requestHeaders(),
       body: JSON.stringify({ question, history }),
       signal: timeout.signal,
     });
@@ -36,6 +43,13 @@ export async function askAssistant(question, messages = [], signal) {
     clearTimeout(timer);
     if (signal) signal.removeEventListener('abort', abort);
   }
+}
+
+function requestHeaders() {
+  const headers = { 'Content-Type': 'application/json' };
+  const t = !USE_MOCK && authToken();
+  if (t) headers['Authorization'] = 'Bearer ' + t;
+  return headers;
 }
 
 // The endpoint returns plain text; standard Flowise returns JSON { text, ... }. Accept both.

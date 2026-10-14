@@ -8,6 +8,9 @@ services:
       - "8000:8000"
     environment:
       APEX_SECRET: change-me
+      # AI Assistant: Flowise prediction endpoint the backend proxies to (/api/ai/assistant).
+      FLOWISE_ASSISTANT_URL: ${FLOWISE_ASSISTANT_URL:-https://apex.aziro.ai/apexflow/api/v1/prediction/8efad22c-6229-4e48-91a3-8e47cfc08052}
+      FLOWISE_API_KEY: ${FLOWISE_API_KEY:-}
       # Dashboard data: the cost_granularity database (see database/README.md).
       # Defaults to a Postgres on the host machine; override with DATABASE_URL.
       DATABASE_URL: ${DATABASE_URL:-postgresql://${USER}@host.docker.internal:5432/cost_granularity}

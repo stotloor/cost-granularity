@@ -8,6 +8,7 @@ const store = (() => {
   return { getItem: (k) => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = v; }, removeItem: (k) => { delete m[k]; } };
 })();
 const token = () => store.getItem('apex_token');
+export const authToken = token;
 
 function tableOf(entity) {
   const e = SCHEMA[entity];

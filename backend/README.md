@@ -21,6 +21,9 @@ Point the frontend at it by setting `VITE_API_URL=http://localhost:8000`.
 - File upload/download at `/api/files`.
 - Real-time SSE stream at `/api/events`.
 - AI proxy at `/api/ai/chat` (uses ANTHROPIC_API_KEY; simulates if unset).
+- AI Assistant proxy at `/api/ai/assistant`: forwards `{question, history}` to the Flowise flow at
+  `FLOWISE_ASSISTANT_URL` (plus `FLOWISE_API_KEY` if set). It adds the logged-in user's email as `userId`
+  for conversation history; see `../mcp-server/README.md`.
 - Integration proxy at `/api/integrations/{name}` (secrets from env).
 - Payments at `/api/payments/checkout` (Stripe; simulates if unset).
 

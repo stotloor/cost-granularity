@@ -1,14 +1,23 @@
 """AI connector (capability 17, Wave 1 #3): chat, summarize, translate, extract, RAG."""
 import hashlib, json, os, sqlite3
 
+from typing import Literal
+
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Response
+from pydantic import BaseModel, Field
 
 from . import db, rbac
 
 router = APIRouter(prefix="/api/ai")
 MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+# Flowise prediction endpoint of the AI Assistant flow, and its API key if the flow requires one.
+FLOWISE_ASSISTANT_URL = os.environ.get(
+    "FLOWISE_ASSISTANT_URL",
+    "https://apex.aziro.ai/apexflow/api/v1/prediction/8efad22c-6229-4e48-91a3-8e47cfc08052")
+FLOWISE_API_KEY = os.environ.get("FLOWISE_API_KEY")
+ASSISTANT_TIMEOUT_S = 180  # agent runs with several tool calls can take a while
+ASSISTANT_HISTORY_MESSAGES = 20
 
 
 def _ai_call(messages: list, system: str | None = None, max_tokens: int = 1024):
@@ -55,6 +64,54 @@ class ExtractRequest(BaseModel):
 @router.post("/chat")
 def chat(body: ChatRequest, user=Depends(rbac.current_user)):
     return _ai_call(body.messages, body.system, body.max_tokens or 1024)
+
+
+class AssistantMessage(BaseModel):
+    role: Literal["userMessage", "apiMessage"]
+    content: str
+
+
+class AssistantRequest(BaseModel):
+    question: str = Field(min_length=1)
+    history: list[AssistantMessage] = []
+
+
+def assistant_payload(body: AssistantRequest, user_id: str) -> dict:
+    """The prediction request Flowise receives. userId comes from the login, never the client:
+    Agentflow V2 reads it as {{ $flow.state.userId }} (Start node Flow State), a chatflow as
+    {{ $vars.userId }}. Flowise only applies overrideConfig keys allowed in the flow's
+    Configuration -> Security -> Override Configuration."""
+    return {
+        "question": body.question,
+        "history": [m.model_dump() for m in body.history[-ASSISTANT_HISTORY_MESSAGES:]],
+        "overrideConfig": {
+            "startState": [{"key": "userId", "value": user_id}],
+            "vars": {"userId": user_id},
+        },
+    }
+
+
+@router.post("/assistant")
+def assistant(body: AssistantRequest, user=Depends(rbac.current_user)):
+    """Proxy to the Flowise AI Assistant flow, tagging the request with the caller's email so the
+    agent can recall and store conversation history (MCP get_recent_conversations /
+    add_conversation_summary) for that user only."""
+    with db._lock, db.connect() as conn:
+        row = conn.execute("SELECT email FROM users WHERE id = ?", (user["id"],)).fetchone()
+    if not row:
+        raise HTTPException(status_code=401, detail="User not found")
+    headers = {"Authorization": "Bearer " + FLOWISE_API_KEY} if FLOWISE_API_KEY else {}
+    try:
+        r = httpx.post(FLOWISE_ASSISTANT_URL, json=assistant_payload(body, row["email"]),
+                       headers=headers, timeout=ASSISTANT_TIMEOUT_S)
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="The assistant took too long to respond. Try a narrower question.")
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Assistant request failed: " + str(exc))
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Assistant request failed ({r.status_code}): {r.text[:300]}")
+    # Flowise answers with JSON {text, ...} or plain text; pass it through for the client to parse.
+    return Response(content=r.content, media_type=r.headers.get("content-type", "text/plain"))
 
 
 @router.post("/summarize")

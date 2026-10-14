@@ -50,8 +50,21 @@ The two history tools connect as `cg_mcp_history`, not `cg_mcp_readonly`. That r
 INSERT that one table, so the history is append-only and the analysis connection stays read-only.
 `cg_mcp_readonly` can't see the table, so `get_schema` and `run_query` don't expose it.
 
-The app has no Postgres user table, so `user_id` is whatever stable identifier the client gives the agent
-(e.g. the login email). Pass it in the agent's prompt or session variables.
+The app has no Postgres user table, so `user_id` is whatever stable identifier the client gives the agent.
+In this app it's the login email. The backend's `/api/ai/assistant` proxy sets it, so a user can't pick someone
+else's ID:
+
+1. The frontend posts `{question, history}` with its login token to `/api/ai/assistant`.
+2. The backend looks up the user's email and forwards to Flowise with
+   `overrideConfig: {startState: [{key: "userId", value: <email>}], vars: {userId: <email>}}`.
+3. The agent reads it in its system prompt as `{{ $flow.state.userId }}` (Agentflow V2) or
+   `{{ $vars.userId }}` (chatflow) and passes it to the history tools (see `prompts/conversational_agent.md`).
+
+**Flowise setup:**
+- On the Start node, add a Flow State key `userId` with an empty value.
+- In the flow's Configuration → Security → Override Configuration, enable override and allow the Start
+  node's `startState`. Without this, Flowise silently ignores the value.
+- For a chatflow, create a Variable `userId` and allow it to be overridden instead.
 
 ## Run
 
