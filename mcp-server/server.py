@@ -6,7 +6,8 @@
 Connects with $CG_DATABASE_URL (default: postgresql://cg_mcp_readonly@localhost/cost_granularity).
 Use the cg_mcp_readonly role created by database/schema.sql: it can only SELECT, its
 transactions are read-only and its statements time out. The server adds its own
-guards (single statement, read-only transaction, row cap) on top.
+guards (single statement, read-only transaction, row cap) on top. Conversation history is
+written separately as cg_mcp_history ($CG_HISTORY_DATABASE_URL; database/conversation_history.sql).
 """
 from __future__ import annotations
 
@@ -28,11 +29,18 @@ from psycopg import sql
 import charts
 
 DSN = os.environ.get('CG_DATABASE_URL', 'postgresql://cg_mcp_readonly@localhost/cost_granularity')
+# Conversation history is written with its own role (SELECT/INSERT on one table only), so the
+# analysis connection above stays read-only. See database/conversation_history.sql.
+HISTORY_DSN = os.environ.get('CG_HISTORY_DATABASE_URL', 'postgresql://cg_mcp_history@localhost/cost_granularity')
+HISTORY_TABLE = sql.Identifier('assistant', 'conversation_history')
+RECENT_CONVERSATIONS_LIMIT = 3
 SCHEMA = 'cost_granularity'
 STATEMENT_TIMEOUT_MS = int(os.environ.get('CG_STATEMENT_TIMEOUT_MS', '15000'))
 MAX_ROWS_CAP = 2000
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True,
                             open_world_hint=False)
+APPEND_ONLY = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False,
+                              open_world_hint=False)
 
 mcp = MCPServer(
     'cost-granularity',
@@ -42,7 +50,9 @@ mcp = MCPServer(
         'Start with get_business_context and get_schema, use describe_table / get_distinct_values / '
         'search_values to learn the data, then answer with run_query (PostgreSQL SELECT). '
         'Prefer the v_* views: they already compute YTD totals, allocated amounts and reconciliation flags. '
-        'To show a chart, call create_chart and paste its `markdown` block verbatim into your answer.'
+        'To show a chart, call create_chart and paste its `markdown` block verbatim into your answer. '
+        'Conversation memory: get_recent_conversations recalls earlier conversations with a user, and '
+        'add_conversation_summary stores a summary of this one (the only write these tools can make).'
     ),
 )
 
@@ -448,6 +458,58 @@ def get_business_context() -> str:
     data is expected to satisfy (deviations are insights), useful derived metrics and which views
     to use. Read this before analysing."""
     return BUSINESS_CONTEXT
+
+
+# ---------------------------------------------------------------------------
+# Conversation history (assistant.conversation_history, written as cg_mcp_history)
+# ---------------------------------------------------------------------------
+
+def _history(query: sql.Composable, params: tuple) -> list[dict[str, Any]]:
+    """Run one statement on the history connection and commit; rows come back as dicts."""
+    try:
+        with psycopg.connect(HISTORY_DSN, connect_timeout=10) as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL('SET LOCAL statement_timeout = {}').format(sql.Literal(STATEMENT_TIMEOUT_MS)))
+            cur.execute(query, params)
+            cols = [d.name for d in cur.description]
+            return [{c: _jsonable(v) for c, v in zip(cols, r)} for r in cur.fetchall()]
+    except psycopg.errors.UndefinedTable:
+        raise QueryError('conversation history is not set up: run database/conversation_history.sql') from None
+    except psycopg.Error as e:
+        raise QueryError(_pg_error(e)) from None
+
+
+@mcp.tool(annotations=APPEND_ONLY)
+def add_conversation_summary(user_id: str, summary: str) -> dict:
+    """Store a summary of the conversation you just had with a user, timestamped now, so a later
+    conversation can pick up where this one left off (see get_recent_conversations).
+
+    - user_id: who the conversation was with, e.g. their login email; matched case-insensitively.
+    - summary: free text. Record what was asked, the key findings with their figures and keys
+      (PO, project, WBS, investment), and any open follow-ups."""
+    user_id, summary = (user_id or '').strip(), (summary or '').strip()
+    if not user_id or not summary:
+        raise QueryError('user_id and summary are required')
+    rows = _history(sql.SQL('INSERT INTO {} (user_id, summary) VALUES (%s, %s) '
+                            'RETURNING id, user_id, summary, created_at').format(HISTORY_TABLE),
+                    (user_id, summary))
+    return {'status': 'success', 'conversation': rows[0]}
+
+
+@mcp.tool(annotations=READ_ONLY)
+def get_recent_conversations(user_id: str, limit: int = RECENT_CONVERSATIONS_LIMIT) -> dict:
+    """Fetch the most recent stored conversation summaries for a user, newest first
+    (default 3, max 20). Call it at the start of a conversation to recall earlier context;
+    an empty list means there is no history.
+
+    - user_id: the same identifier used with add_conversation_summary, e.g. their login email."""
+    user_id = (user_id or '').strip()
+    if not user_id:
+        raise QueryError('user_id is required')
+    limit = max(1, min(int(limit), 20))
+    rows = _history(sql.SQL('SELECT id, summary, created_at FROM {} WHERE lower(user_id) = lower(%s) '
+                            'ORDER BY created_at DESC, id DESC LIMIT %s').format(HISTORY_TABLE),
+                    (user_id, limit))
+    return {'status': 'success', 'user_id': user_id, 'count': len(rows), 'conversations': rows}
 
 
 @mcp.prompt()

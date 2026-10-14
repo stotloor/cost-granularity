@@ -3,7 +3,10 @@
     "cost-granularity": {
       "command": "/Users/stotloor/workspace/project-cost-granularity-controller/mcp-server/.venv/bin/python",
       "args": ["/Users/stotloor/workspace/project-cost-granularity-controller/mcp-server/server.py"],
-      "env": { "CG_DATABASE_URL": "postgresql://cg_mcp_readonly@localhost/cost_granularity" }
+      "env": {
+        "CG_DATABASE_URL": "postgresql://cg_mcp_readonly@localhost/cost_granularity",
+        "CG_HISTORY_DATABASE_URL": "postgresql://cg_mcp_history@localhost/cost_granularity"
+      }
     }
   }
 }

@@ -5,6 +5,7 @@
 import asyncio
 import json
 import sys
+import uuid
 from pathlib import Path
 
 from mcp import ClientSession, StdioServerParameters
@@ -39,7 +40,8 @@ async def main():
         await s.initialize()
         tools = {t.name for t in (await s.list_tools()).tools}
         check('tools listed', tools >= {'get_schema', 'run_query', 'describe_table', 'get_distinct_values',
-                                        'search_values', 'get_business_context', 'create_chart'}, tools)
+                                        'search_values', 'get_business_context', 'create_chart',
+                                        'add_conversation_summary', 'get_recent_conversations'}, tools)
         prompts = {p.name for p in (await s.list_prompts()).prompts}
         check('prompt listed', 'cost_granularity_analyst' in prompts, prompts)
 
@@ -120,6 +122,23 @@ async def main():
         ]:
             res = payload(await call('create_chart', **args))
             check(f'chart rejects: {bad}', isinstance(res, dict) and 'error' in res, res)
+
+        user = f'smoke-test-{uuid.uuid4().hex}@example.com'
+        h = payload(await call('get_recent_conversations', user_id=user))
+        check('no history for new user', h.get('count') == 0 and h.get('conversations') == [], h)
+        for i in range(4):
+            a = payload(await call('add_conversation_summary', user_id=user, summary=f'summary {i}'))
+            check(f'stored summary {i}', a.get('conversation', {}).get('summary') == f'summary {i}', a)
+        h = payload(await call('get_recent_conversations', user_id=user.upper()))
+        check('3 most recent, newest first, case-insensitive user',
+              [c['summary'] for c in h.get('conversations', [])] == ['summary 3', 'summary 2', 'summary 1'], h)
+        h = payload(await call('get_recent_conversations', user_id=user, limit=10))
+        check('history limit', h.get('count') == 4, h)
+        for bad in [dict(user_id=user, summary='  '), dict(user_id='', summary='x')]:
+            res = payload(await call('add_conversation_summary', **bad))
+            check(f'history rejects: {bad}', isinstance(res, dict) and 'error' in res, res)
+        names = {x['name'] for x in payload(await call('get_schema', include_columns=False))['relations']}
+        check('history hidden from analysis tools', 'conversation_history' not in names, names)
 
         ctx = payload(await call('get_business_context'))
         check('business context', isinstance(ctx, str) and 'percentage_of_wbs' in ctx)

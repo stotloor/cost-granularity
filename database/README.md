@@ -47,3 +47,14 @@ The design rules:
 `schema.sql` also creates `cg_mcp_readonly`, used by `../mcp-server/`. The role has SELECT-only
 grants, read-only transactions and a 15 s statement timeout. It can't see `seeded_exception`, the PoC
 answer key.
+
+## Conversation history
+
+`conversation_history.sql` creates `assistant.conversation_history` for the AI Assistant's
+`add_conversation_summary` and `get_recent_conversations` MCP tools. It also creates the `cg_mcp_history`
+role, which can only SELECT and INSERT that table. The table is in its own schema, so re-running
+`schema.sql` doesn't drop it. The script is idempotent and never deletes history:
+
+```bash
+psql -d cost_granularity -v ON_ERROR_STOP=1 -f conversation_history.sql
+```

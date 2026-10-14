@@ -1,7 +1,8 @@
 # Cost Granularity MCP server
 
 Gives an agent read-only SQL access to the `cost_granularity` Postgres database built by
-`../database/`. It exposes the tools an analyst needs to explore the data and find reconciliation issues.
+`../database/`. It exposes the tools an analyst needs to explore the data and find reconciliation issues,
+plus conversation history so the assistant can recall earlier conversations with a user.
 
 ## Tools
 
@@ -14,8 +15,11 @@ Gives an agent read-only SQL access to the `cost_granularity` Postgres database 
 | `get_distinct_values` | Distinct values of a column with counts, for statuses, codes, regions and price bases. |
 | `search_values` | Finds every table, column and row key that mentions a term, e.g. `GT-P0416`, `Northfield` or `PAC-02000`. |
 | `create_chart` | Builds a chart from a read-only SQL `query` (preferred, so the values come straight from the database) or from inline `data`. It returns a `cg-chart` spec wrapped in a ```` ```chart ```` markdown block for the agent to paste into its answer. |
+| `add_conversation_summary` | Stores a summary of a conversation for a `user_id` (e.g. the login email), timestamped now. |
+| `get_recent_conversations` | The most recent summaries for a `user_id`, newest first (default 3, max 20). `user_id` matches case-insensitively. |
 
-There is also a prompt, `cost_granularity_analyst`, with a suggested workflow. All tools are annotated `readOnlyHint`.
+There is also a prompt, `cost_granularity_analyst`, with a suggested workflow. Every tool except
+`add_conversation_summary` is annotated `readOnlyHint`.
 
 ## Safety
 
@@ -36,6 +40,19 @@ The server adds its own guards on top:
 find the issues itself. To expose it:
 `GRANT SELECT ON cost_granularity.seeded_exception TO cg_mcp_readonly;`
 
+## Conversation history
+
+Summaries are stored in `assistant.conversation_history`, created by `../database/conversation_history.sql`.
+The table sits in its own schema because `schema.sql` drops `cost_granularity`, and reloading the data
+shouldn't wipe the history.
+
+The two history tools connect as `cg_mcp_history`, not `cg_mcp_readonly`. That role can only SELECT and
+INSERT that one table, so the history is append-only and the analysis connection stays read-only.
+`cg_mcp_readonly` can't see the table, so `get_schema` and `run_query` don't expose it.
+
+The app has no Postgres user table, so `user_id` is whatever stable identifier the client gives the agent
+(e.g. the login email). Pass it in the agent's prompt or session variables.
+
 ## Run
 
 ```bash
@@ -48,6 +65,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | Env var | Default |
 |---|---|
 | `CG_DATABASE_URL` | `postgresql://cg_mcp_readonly@localhost/cost_granularity` |
+| `CG_HISTORY_DATABASE_URL` | `postgresql://cg_mcp_history@localhost/cost_granularity` |
 | `CG_STATEMENT_TIMEOUT_MS` | `15000` |
 
 ## Clients
